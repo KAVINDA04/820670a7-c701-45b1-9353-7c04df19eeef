@@ -9,21 +9,23 @@ class ReportService
 {
     public function generateDiagnostic(string $studentId, array $students, array $assessments, array $questions, array $responses): string
     {
-        [$studentName, $completed] = $this->getLatestCompleted($studentId, $students, $responses);
-        if (!$completed) {
+        [$studentName, $completed] = $this->getCompleted($studentId, $students, $responses);
+        $latest = $completed->last();
+
+        if (!$latest) {
             return "{$studentName} has no completed assessments.";
         }
 
-        $assessment = collect($assessments)->firstWhere('id', $completed['assessmentId']);
-        [$details, $correctCount] = $this->strandDetails($completed, $questions);
+        $assessment = collect($assessments)->firstWhere('id', $latest['assessmentId']);
+        [$details, $correctCount] = $this->strandDetails($latest, $questions);
 
-        $completedDate = $this->formatDate($completed['completed']);
+        $completedDate = $this->formatDate($latest['completed']);
         $report  = "{$studentName} recently completed {$assessment['name']} assessment on {$completedDate}\n";
-        $report .= "He got {$correctCount} questions right out of " . count($completed['responses']) . ". Details by strand given below:\n\n";
+        $report .= "He got {$correctCount} questions right out of " . count($latest['responses']) . ". Details by strand given below:\n\n";
 
-        foreach ($details as $strand => $d) {
-            $correct = $d['correct'] ?? 0;
-            $report .= "{$strand}: {$correct} out of {$d['total']} correct\n";
+        foreach ($details as $strand => $data) {
+            $correct = $data['correct'] ?? 0;
+            $report .= "{$strand}: {$correct} out of {$data['total']} correct\n";
         }
 
         return $report;
@@ -31,16 +33,16 @@ class ReportService
 
     public function generateProgress(string $studentId, array $students, array $assessments, array $questions, array $responses): string
     {
-        [$studentName, $completed] = $this->getAllCompleted($studentId, $students, $responses);
+        [$studentName, $completed] = $this->getCompleted($studentId, $students, $responses);
         if ($completed->isEmpty()) {
             return "{$studentName} has no completed assessments.";
         }
 
         $lines = [];
-        foreach ($completed as $resp) {
-            $date = $this->formatDate($resp['completed'], 'jS F Y');
-            $score = $this->score($resp, $questions);
-            $lines[] = "Date: {$date}, Raw Score: {$score} out of " . count($resp['responses']);
+        foreach ($completed as $response) {
+            $date = $this->formatDate($response['completed'], 'jS F Y');
+            $score = $this->score($response, $questions);
+            $lines[] = "Date: {$date}, Raw Score: {$score} out of " . count($response['responses']);
         }
 
         $first = $completed->first();
@@ -56,28 +58,30 @@ class ReportService
 
     public function generateFeedback(string $studentId, array $students, array $assessments, array $questions, array $responses): string
     {
-        [$studentName, $completed] = $this->getLatestCompleted($studentId, $students, $responses);
-        if (!$completed) {
+        [$studentName, $completed] = $this->getCompleted($studentId, $students, $responses);
+        $latest = $completed->last();
+
+        if (!$latest) {
             return "{$studentName} has no completed assessments.";
         }
 
-        $assessment = collect($assessments)->firstWhere('id', $completed['assessmentId']);
-        $correctCount = $this->score($completed, $questions);
+        $assessment = collect($assessments)->firstWhere('id', $latest['assessmentId']);
+        $correctCount = $this->score($latest, $questions);
 
-        $completedDate = $this->formatDate($completed['completed']);
+        $completedDate = $this->formatDate($latest['completed']);
         $report  = "{$studentName} recently completed {$assessment['name']} assessment on {$completedDate}\n";
-        $report .= "He got {$correctCount} questions right out of " . count($completed['responses']) . ". Feedback for wrong answers given below\n\n";
+        $report .= "He got {$correctCount} questions right out of " . count($latest['responses']) . ". Feedback for wrong answers given below\n\n";
 
-        foreach ($completed['responses'] as $resp) {
-            $q = collect($questions)->firstWhere('id', $resp['questionId']);
-            if ($resp['response'] !== $q['config']['key']) {
-                $yourAnswer  = $this->formatAnswer($q, $resp['response']);
-                $rightAnswer = $this->formatAnswer($q, $q['config']['key']);
+        foreach ($latest['responses'] as $response) {
+            $question = collect($questions)->firstWhere('id', $response['questionId']);
+            if ($response['response'] !== $question['config']['key']) {
+                $yourAnswer  = $this->formatAnswer($question, $response['response']);
+                $rightAnswer = $this->formatAnswer($question, $question['config']['key']);
 
-                $report .= "Question: {$q['stem']}\n";
+                $report .= "Question: {$question['stem']}\n";
                 $report .= "Your answer: {$yourAnswer}\n";
                 $report .= "Right answer: {$rightAnswer}\n";
-                $report .= "Hint: {$q['config']['hint']}";
+                $report .= "Hint: {$question['config']['hint']}\n\n";
             }
         }
 
@@ -91,25 +95,14 @@ class ReportService
         return $student['firstName'] . ' ' . $student['lastName'];
     }
 
-    private function getLatestCompleted(string $studentId, array $students, array $responses): array
+    private function getCompleted(string $studentId, array $students, array $responses): array
     {
         $studentName = $this->getStudentName($students, $studentId);
+
         $completed = collect($responses)
             ->where('student.id', $studentId)
             ->whereNotNull('completed')
-            ->sortByDesc(fn ($r) => Carbon::createFromFormat('d/m/Y H:i:s', $r['completed']))
-            ->first();
-
-        return [$studentName, $completed];
-    }
-
-    private function getAllCompleted(string $studentId, array $students, array $responses): array
-    {
-        $studentName = $this->getStudentName($students, $studentId);
-        $completed = collect($responses)
-            ->where('student.id', $studentId)
-            ->whereNotNull('completed')
-            ->sortBy(fn ($r) => Carbon::createFromFormat('d/m/Y H:i:s', $r['completed']));
+            ->sortBy(fn ($response) => Carbon::createFromFormat('d/m/Y H:i:s', $response['completed']));
 
         return [$studentName, $completed];
     }
@@ -119,12 +112,12 @@ class ReportService
         $details = [];
         $correctCount = 0;
 
-        foreach ($completed['responses'] as $resp) {
-            $q = collect($questions)->firstWhere('id', $resp['questionId']);
-            $strand = $q['strand'];
+        foreach ($completed['responses'] as $response) {
+            $question = collect($questions)->firstWhere('id', $response['questionId']);
+            $strand = $question['strand'];
 
             $details[$strand]['total'] = ($details[$strand]['total'] ?? 0) + 1;
-            if ($resp['response'] === $q['config']['key']) {
+            if ($response['response'] === $question['config']['key']) {
                 $details[$strand]['correct'] = ($details[$strand]['correct'] ?? 0) + 1;
                 $correctCount++;
             }
@@ -134,14 +127,14 @@ class ReportService
 
     private function score(array $response, array $questions): int
     {
-        return collect($response['responses'])->filter(fn($r) =>
-            $r['response'] === collect($questions)->firstWhere('id', $r['questionId'])['config']['key']
+        return collect($response['responses'])->filter(fn($response) =>
+            $response['response'] === collect($questions)->firstWhere('id', $response['questionId'])['config']['key']
         )->count();
     }
 
-    private function formatAnswer(array $q, string $optionId): string
+    private function formatAnswer(array $question, string $optionId): string
     {
-        $option = collect($q['config']['options'])->firstWhere('id', $optionId);
+        $option = collect($question['config']['options'])->firstWhere('id', $optionId);
         return "{$option['label']} with value {$option['value']}";
     }
 
