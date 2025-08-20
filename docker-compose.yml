@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+    app:
+        build: .
+        container_name: laravel_app
+        volumes:
+            - .:/var/www
+        working_dir: /var/www
+        tty: true
+        command: php artisan report:generate
+        ports:
+            - "8000:8000"
+
+    test:
+        build: .
+        container_name: laravel_test
+        volumes:
+            - .:/var/www
+        working_dir: /var/www
+        tty: true
+        command: vendor/bin/phpunit
