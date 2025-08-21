@@ -20,6 +20,7 @@ jobs:
 
       - name: Prepare environment
         run: |
+          cp -n .env.example .env || true
           docker compose run --rm test composer install --prefer-dist --no-interaction --no-progress
           docker compose run --rm test git config --global --add safe.directory /var/www
           docker compose run --rm test php artisan key:generate
