@@ -18,5 +18,8 @@ jobs:
       - name: Build containers
         run: docker compose build
 
+      - name: Prepare environment
+        run: docker compose run --rm test php artisan key:generate
+
       - name: Run Tests
         run: docker compose run --rm test
