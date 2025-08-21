@@ -19,4 +19,4 @@ services:
             - .:/var/www
         working_dir: /var/www
         tty: true
-        command: vendor/bin/phpunit
+        command: sh -c "composer install && php artisan test"
